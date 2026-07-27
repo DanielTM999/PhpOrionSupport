@@ -1,0 +1,17 @@
+{
+  "PhpIdeAdapter.editor.goToDefinition": "Zur Definition gehen",
+  "PhpIdeAdapter.editor.goToImplementation": "Zur Implementierung gehen",
+  "PhpIdeAdapter.editor.findUsages": "Verwendungen suchen",
+  "PhpIdeAdapter.lens.implementationOne": "1 Implementierung",
+  "PhpIdeAdapter.lens.implementations": "{0} Implementierungen",
+  "PhpIdeAdapter.lens.implementationTooltip": "Zur Implementierung von {0}",
+  "PhpIdeAdapter.lens.usageOne": "1 Verwendung",
+  "PhpIdeAdapter.lens.usages": "{0} Verwendungen",
+  "PhpIdeAdapter.lens.usagesTooltip": "Verwendungen von {0} anzeigen",
+  "PhpIdeAdapter.popup.implementations": "{0} Implementierungen von {1}",
+  "PhpIdeAdapter.popup.usageOne": "1 Verwendung von {0}",
+  "PhpIdeAdapter.popup.usages": "{0} Verwendungen von {1}",
+  "PhpIdeAdapter.status.definitionNotFound": "PHP: Definition nicht gefunden",
+  "PhpIdeAdapter.status.definitionFileNotFound": "PHP: Definitionsdatei nicht gefunden",
+  "PhpIdeAdapter.status.usagesNotFound": "PHP: Keine Verwendungen gefunden"
+}

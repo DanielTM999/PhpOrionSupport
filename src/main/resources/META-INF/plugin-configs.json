@@ -1,0 +1,23 @@
+{
+  "pluginPackages": [
+    "dtm.ide"
+  ],
+  "pluginCollectionId": "php-orion-support",
+  "pluginCollectionName": "PHP Orion Support",
+  "pluginCollectionVersion": "1.0.0",
+  "pluginCollectionDescription": "Suporte nativo a PHP, Composer, Origins e Xdebug na Orion IDE.",
+  "pluginCollectionAuthor": "DanielTM999",
+  "pluginCollectionAuthorEmail": "danielmelo101203@gmail.com",
+  "pluginCollectionWebsite": "https://github.com/DanielTM999/PhpOrionSupport",
+  "pluginLicense": "MIT",
+  "pluginMinimumAppVersion": "1.0.0",
+  "plugins": [
+    {
+      "id": "php-ide-adapter",
+      "name": "PHP",
+      "description": "Adapter independente para PHP e o framework Origins.",
+      "version": "1.0.0",
+      "website": "https://github.com/DanielTM999/PhpOrionSupport"
+    }
+  ]
+}
