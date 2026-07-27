@@ -13,5 +13,8 @@
   "PhpIdeAdapter.popup.usages": "{0} Verwendungen von {1}",
   "PhpIdeAdapter.status.definitionNotFound": "PHP: Definition nicht gefunden",
   "PhpIdeAdapter.status.definitionFileNotFound": "PHP: Definitionsdatei nicht gefunden",
-  "PhpIdeAdapter.status.usagesNotFound": "PHP: Keine Verwendungen gefunden"
+  "PhpIdeAdapter.status.usagesNotFound": "PHP: Keine Verwendungen gefunden",
+  "PhpIdeAdapter.diagnostic.missingInterfaceMethods": "Die Klasse {0} muss die Schnittstellenmethoden implementieren: {1}.",
+  "PhpIdeAdapter.action.implementInterface": "Schnittstelle implementieren",
+  "PhpIdeAdapter.tooltip.codeActions": "Codeaktionen anzeigen (Alt+Eingabe)"
 }

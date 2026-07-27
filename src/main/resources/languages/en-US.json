@@ -13,5 +13,8 @@
   "PhpIdeAdapter.popup.usages": "{0} usages of {1}",
   "PhpIdeAdapter.status.definitionNotFound": "PHP: definition not found",
   "PhpIdeAdapter.status.definitionFileNotFound": "PHP: definition file not found",
-  "PhpIdeAdapter.status.usagesNotFound": "PHP: no usages found"
+  "PhpIdeAdapter.status.usagesNotFound": "PHP: no usages found",
+  "PhpIdeAdapter.diagnostic.missingInterfaceMethods": "Class {0} must implement the interface methods: {1}.",
+  "PhpIdeAdapter.action.implementInterface": "Implement interface",
+  "PhpIdeAdapter.tooltip.codeActions": "Show code actions (Alt+Enter)"
 }

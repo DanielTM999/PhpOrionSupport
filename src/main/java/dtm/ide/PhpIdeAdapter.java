@@ -19,6 +19,7 @@ import dtm.ide.api.project.editor.FormatCodeContext;
 import dtm.ide.api.project.editor.IdeCompletionContext;
 import dtm.ide.api.project.editor.IdeCompletionTriggerKind;
 import dtm.ide.api.project.editor.IdeCodeLensContext;
+import dtm.ide.api.project.editor.IdeCodeActionContext;
 import dtm.ide.api.project.editor.IdeDefinitionContext;
 import dtm.ide.api.project.editor.IdeDiagnosticsContext;
 import dtm.ide.api.project.editor.IdeDocumentHighlightContext;
@@ -27,6 +28,7 @@ import dtm.ide.api.project.editor.IdeFormatScope;
 import dtm.ide.api.project.editor.IdeHoverContext;
 import dtm.ide.api.project.editor.IdeSignatureHelpContext;
 import dtm.ide.api.project.editor.IdeWordClickContext;
+import dtm.ide.api.project.editor.IdeWordCaretContext;
 import dtm.ide.api.project.editor.NativeEditorType;
 import dtm.ide.api.project.tree.ProjectTreeIgnoreRule;
 import dtm.ide.api.theme.EditorTheme;
@@ -54,26 +56,46 @@ import dtm.ide.run.PhpRunSupport;
 import dtm.ide.settings.PhpPluginSettings;
 import dtm.ide.settings.PhpSettingsPage;
 import dtm.stools.component.panels.dock.DockRegion;
+import dtm.stools.component.panels.editor.code.api.CodeAction;
 import dtm.stools.component.panels.editor.code.api.Location;
+import dtm.stools.component.panels.editor.code.api.Range;
+import dtm.stools.component.panels.editor.code.api.TextEdit;
 import dtm.stools.component.panels.editor.code.autocomplete.AutoCompleteItem;
 import dtm.stools.component.panels.editor.code.codelens.CodeLens;
 import dtm.stools.component.panels.editor.code.codelens.CodeLensItem;
 import dtm.stools.component.panels.editor.code.diagnostics.Diagnostic;
+import dtm.stools.component.panels.editor.code.diagnostics.DiagnosticSeverity;
 import dtm.stools.component.panels.editor.code.hover.HoverInfo;
 import dtm.stools.component.panels.editor.code.prototype.folding.FoldRule;
 import dtm.stools.component.panels.editor.code.provider.TokenizerCodeEditorProvider;
 import dtm.stools.component.panels.editor.code.signature.SignatureHelp;
+import dtm.stools.utils.ImageUtils;
 import lombok.extern.slf4j.Slf4j;
 
+import javax.swing.Icon;
+import javax.swing.JComponent;
+import javax.swing.JLayeredPane;
 import javax.swing.JOptionPane;
+import javax.swing.JRootPane;
 import javax.swing.SwingUtilities;
+import javax.swing.UIManager;
+import javax.swing.text.JTextComponent;
 import java.awt.Color;
 import java.awt.Component;
 import java.awt.Cursor;
+import java.awt.Dimension;
+import java.awt.Graphics;
+import java.awt.Graphics2D;
 import java.awt.Point;
+import java.awt.Rectangle;
+import java.awt.RenderingHints;
 import java.awt.Window;
+import java.awt.event.MouseAdapter;
 import java.awt.event.MouseEvent;
+import java.awt.geom.Rectangle2D;
 import java.io.OutputStream;
+import java.lang.reflect.Field;
+import java.lang.reflect.Method;
 import java.net.URI;
 import java.nio.file.Files;
 import java.nio.file.Path;
@@ -82,9 +104,13 @@ import java.util.Collection;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.Objects;
 import java.util.Set;
 import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.ConcurrentHashMap;
+import java.util.concurrent.Executors;
+import java.util.concurrent.ScheduledExecutorService;
+import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicLong;
 import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.function.Consumer;
@@ -110,6 +136,13 @@ public class PhpIdeAdapter extends IdeAdapter {
     private final AtomicLong lifecycle = new AtomicLong();
     private final AtomicBoolean lspStarting = new AtomicBoolean();
     private final Set<Path> openPhpFiles = ConcurrentHashMap.newKeySet();
+    private final AtomicLong wordCaretTicket = new AtomicLong();
+    private final ScheduledExecutorService codeActionDelayExecutor =
+            Executors.newSingleThreadScheduledExecutor(r -> {
+                Thread thread = new Thread(r, "php-code-action-delay");
+                thread.setDaemon(true);
+                return thread;
+            });
     private volatile Path projectRoot;
     private volatile PhpProjectDescriptor descriptor;
     private volatile IdeProjectContext projectContext;
@@ -126,6 +159,8 @@ public class PhpIdeAdapter extends IdeAdapter {
     private volatile String originsPanelId;
     private volatile IdeEditorContext debugEditor;
     private volatile int debugLine = -1;
+    private volatile JComponent codeActionLamp;
+    private volatile JLayeredPane codeActionLampLayer;
 
     @Override
     public boolean supports(Path path) {
@@ -259,6 +294,8 @@ public class PhpIdeAdapter extends IdeAdapter {
     @Override
     public void onProjectClosed(IdeProjectContext context) {
         lifecycle.incrementAndGet();
+        wordCaretTicket.incrementAndGet();
+        SwingUtilities.invokeLater(this::hideCodeActionLamp);
         if (languageService != null) languageService.stopAsync();
         if (runSupport != null) runSupport.stopAll();
         if (debugService != null) debugService.stop();
@@ -346,6 +383,8 @@ public class PhpIdeAdapter extends IdeAdapter {
 
     @Override
     public void onCodeEditorTextChanged(IdeEditorContext context) {
+        wordCaretTicket.incrementAndGet();
+        SwingUtilities.invokeLater(this::hideCodeActionLamp);
         if (context != null && PhpProjectConventions.isPhp(context.filePath())) {
             process().ifPresent(lsp -> lsp.sync(context.filePath(), context.getText()));
         }
@@ -353,6 +392,8 @@ public class PhpIdeAdapter extends IdeAdapter {
 
     @Override
     public void onEditorClose(Path filePath) {
+        wordCaretTicket.incrementAndGet();
+        SwingUtilities.invokeLater(this::hideCodeActionLamp);
         if (filePath != null) openPhpFiles.remove(filePath.toAbsolutePath().normalize());
         process().ifPresent(lsp -> lsp.close(filePath));
     }
@@ -367,10 +408,52 @@ public class PhpIdeAdapter extends IdeAdapter {
                                                  boolean incremental,
                                                  Collection<Diagnostic> previous) {
         if (context == null || !PhpProjectConventions.isPhp(context.getFilePath())) return List.of();
-        return process().map(lsp -> {
+        List<Diagnostic> diagnostics = new ArrayList<>(process().map(lsp -> {
             lsp.sync(context.getFilePath(), context.getText());
             return lsp.diagnostics(context.getFilePath());
-        }).orElse(List.of());
+        }).orElse(List.of()));
+        if (definitionIndex == null) return diagnostics;
+
+        for (PhpDefinitionIndex.MissingInterfaceImplementation missing
+                : definitionIndex.missingInterfaceImplementations(
+                context.getText(), context.getFilePath())) {
+            if (hasMissingInterfaceDiagnostic(diagnostics, missing.range())) continue;
+            String methods = missing.methodNames().stream()
+                    .map(name -> name + "()")
+                    .collect(java.util.stream.Collectors.joining(", "));
+            String message = text("diagnostic.missingInterfaceMethods",
+                    "Class {0} must implement the interface methods: {1}.")
+                    .replace("{0}", missing.className())
+                    .replace("{1}", methods);
+            diagnostics.add(new Diagnostic(
+                    missing.range().start().line(),
+                    missing.range().start().col(),
+                    missing.range().end().line(),
+                    missing.range().end().col(),
+                    DiagnosticSeverity.ERROR,
+                    message));
+        }
+        return List.copyOf(diagnostics);
+    }
+
+    @Override
+    public List<CodeAction> getCodeActions(IdeCodeActionContext context) {
+        if (context == null || context.filePath() == null || definitionIndex == null
+                || !PhpProjectConventions.isPhp(context.filePath())) {
+            return List.of();
+        }
+        List<CodeAction> actions = new ArrayList<>();
+        for (PhpDefinitionIndex.MissingInterfaceImplementation missing
+                : definitionIndex.missingInterfaceImplementations(
+                context.text(), context.filePath())) {
+            if (!rangesIntersect(context.range(), missing.range())) continue;
+            String title = text("action.implementInterface", "Implement interface");
+            actions.add(CodeAction.quickFix(
+                    title,
+                    List.of(TextEdit.insert(
+                            missing.insertion(), missing.implementation()))));
+        }
+        return List.copyOf(actions);
     }
 
     @Override
@@ -477,6 +560,158 @@ public class PhpIdeAdapter extends IdeAdapter {
         navigateAsync(new IdeDefinitionContext(
                 context.text(), context.filePath(), context.line(), context.col(), context.startOffset()),
                 context.editorContext(), false);
+    }
+
+    @Override
+    public void onWordCaretChange(IdeWordCaretContext context) {
+        long ticket = wordCaretTicket.incrementAndGet();
+        SwingUtilities.invokeLater(this::hideCodeActionLamp);
+        if (context == null || context.filePath() == null || context.editorContext() == null
+                || definitionIndex == null
+                || !PhpProjectConventions.isPhp(context.filePath())) {
+            return;
+        }
+        codeActionDelayExecutor.schedule(
+                () -> showCodeActionLampIfCaretStayed(context, ticket),
+                600, TimeUnit.MILLISECONDS);
+    }
+
+    private void showCodeActionLampIfCaretStayed(
+            IdeWordCaretContext context, long ticket) {
+        if (ticket != wordCaretTicket.get()
+                || !isSameCaretContext(context, context.editorContext())) {
+            return;
+        }
+        Range caret = Range.point(context.line(), context.col());
+        boolean hasAction = definitionIndex.missingInterfaceImplementations(
+                        context.text(), context.filePath()).stream()
+                .anyMatch(missing -> rangesIntersect(caret, missing.range()));
+        if (!hasAction) return;
+        SwingUtilities.invokeLater(() -> {
+            if (ticket == wordCaretTicket.get()
+                    && isSameCaretContext(context, context.editorContext())) {
+                showCodeActionLamp(context);
+            }
+        });
+    }
+
+    private boolean isSameCaretContext(
+            IdeWordCaretContext context, IdeEditorContext editorContext) {
+        if (context == null || editorContext == null || editorContext.filePath() == null) {
+            return false;
+        }
+        return Objects.equals(
+                editorContext.filePath().toAbsolutePath().normalize(),
+                context.filePath().toAbsolutePath().normalize())
+                && editorContext.getCaretLine() == context.line()
+                && editorContext.getCaretCol() == context.col()
+                && Objects.equals(editorContext.getText(), context.text());
+    }
+
+    private void showCodeActionLamp(IdeWordCaretContext context) {
+        Component editorComponent = resolveEditorComponent(context.editorContext());
+        if (editorComponent == null || !editorComponent.isShowing()) return;
+        JRootPane rootPane = SwingUtilities.getRootPane(editorComponent);
+        if (rootPane == null) return;
+        hideCodeActionLamp();
+
+        CodeActionLamp lamp = new CodeActionLamp(loadCodeActionLampIcon());
+        lamp.addMouseListener(new MouseAdapter() {
+            @Override
+            public void mouseClicked(MouseEvent event) {
+                hideCodeActionLamp();
+                requestShowCodeActions(context.filePath());
+            }
+        });
+
+        Dimension size = lamp.getPreferredSize();
+        Point location = codeActionLampLocation(editorComponent, context, size);
+        JLayeredPane layeredPane = rootPane.getLayeredPane();
+        SwingUtilities.convertPointFromScreen(location, layeredPane);
+        lamp.setBounds(location.x, location.y, size.width, size.height);
+        layeredPane.add(lamp, JLayeredPane.POPUP_LAYER);
+        layeredPane.repaint(lamp.getBounds());
+        codeActionLamp = lamp;
+        codeActionLampLayer = layeredPane;
+    }
+
+    private Icon loadCodeActionLampIcon() {
+        return ImageUtils.getIconByResource(
+                        PhpIdeAdapter.class, "imgs/codeActionLampRed.svg")
+                .map(icon -> ImageUtils.resizeIcon(icon, 18, 18))
+                .orElseGet(() -> UIManager.getIcon("OptionPane.errorIcon"));
+    }
+
+    private Point codeActionLampLocation(
+            Component editorComponent,
+            IdeWordCaretContext context,
+            Dimension lampSize) {
+        Point screenLocation = editorComponent.getLocationOnScreen();
+        int x = -lampSize.width + 2;
+        int anchorY = caretLineCenterY(editorComponent, context);
+        int y = Math.max(0, Math.min(
+                anchorY - lampSize.height / 2,
+                Math.max(0, editorComponent.getHeight() - lampSize.height)));
+        return new Point(screenLocation.x + x, screenLocation.y + y);
+    }
+
+    private int caretLineCenterY(
+            Component editorComponent, IdeWordCaretContext context) {
+        if (editorComponent instanceof JTextComponent textComponent) {
+            try {
+                int offset = Math.max(0, Math.min(
+                        context.startOffset(), textComponent.getDocument().getLength()));
+                Rectangle2D rectangle = textComponent.modelToView2D(offset);
+                if (rectangle != null) {
+                    return (int) Math.round(
+                            rectangle.getY() + rectangle.getHeight() / 2.0);
+                }
+            } catch (Exception e) {
+                log.debug("Falha ao posicionar lâmpada de ações: {}", e.getMessage());
+            }
+        }
+        return context.mouseY();
+    }
+
+    private void hideCodeActionLamp() {
+        JComponent lamp = codeActionLamp;
+        JLayeredPane layer = codeActionLampLayer;
+        codeActionLamp = null;
+        codeActionLampLayer = null;
+        if (lamp != null && layer != null) {
+            Rectangle bounds = lamp.getBounds();
+            layer.remove(lamp);
+            layer.repaint(bounds);
+        }
+    }
+
+    private Component resolveEditorComponent(IdeEditorContext editorContext) {
+        Object codeEditor = resolveField(editorContext, "codeEditor");
+        Component textArea = invokeGetTextArea(codeEditor);
+        if (textArea != null) return textArea;
+        return codeEditor instanceof Component component ? component : null;
+    }
+
+    private Object resolveField(IdeEditorContext editorContext, String field) {
+        if (editorContext == null) return null;
+        try {
+            Field declaredField = editorContext.getClass().getDeclaredField(field);
+            declaredField.setAccessible(true);
+            return declaredField.get(editorContext);
+        } catch (Exception ignored) {
+            return null;
+        }
+    }
+
+    private Component invokeGetTextArea(Object codeEditor) {
+        if (codeEditor == null) return null;
+        try {
+            Method method = codeEditor.getClass().getMethod("getTextArea");
+            Object textArea = method.invoke(codeEditor);
+            return textArea instanceof Component component ? component : null;
+        } catch (Exception ignored) {
+            return null;
+        }
     }
 
     @Override
@@ -1061,6 +1296,42 @@ public class PhpIdeAdapter extends IdeAdapter {
         if (file != null) requestRefreshDiagnostics(file);
     }
 
+    private static boolean hasMissingInterfaceDiagnostic(
+            List<Diagnostic> diagnostics, Range classRange) {
+        if (classRange == null) return false;
+        for (Diagnostic diagnostic : diagnostics) {
+            if (diagnostic == null || diagnostic.severity() != DiagnosticSeverity.ERROR) continue;
+            Range diagnosticRange = Range.of(
+                    diagnostic.startLine(), diagnostic.startCol(),
+                    diagnostic.endLine(), diagnostic.endCol());
+            if (!rangesIntersect(diagnosticRange, classRange)) continue;
+            String message = diagnostic.message() == null ? ""
+                    : diagnostic.message().toLowerCase(java.util.Locale.ROOT);
+            if (message.contains("abstract method")
+                    || (message.contains("implement") && message.contains("method"))) {
+                return true;
+            }
+        }
+        return false;
+    }
+
+    private static boolean rangesIntersect(Range first, Range second) {
+        if (first == null || second == null
+                || first.start() == null || first.end() == null
+                || second.start() == null || second.end() == null) {
+            return false;
+        }
+        long firstStart = positionKey(first.start().line(), first.start().col());
+        long firstEnd = positionKey(first.end().line(), first.end().col());
+        long secondStart = positionKey(second.start().line(), second.start().col());
+        long secondEnd = positionKey(second.end().line(), second.end().col());
+        return firstStart <= secondEnd && secondStart <= firstEnd;
+    }
+
+    private static long positionKey(int line, int col) {
+        return ((long) Math.max(0, line) << 32) | (Math.max(0, col) & 0xffffffffL);
+    }
+
     private static Character triggerOf(IdeCompletionContext context) {
         if (context.triggerKind() == null || context.caretOffset() <= 0 || context.text() == null) return null;
         int index = Math.min(context.caretOffset(), context.text().length()) - 1;
@@ -1086,6 +1357,65 @@ public class PhpIdeAdapter extends IdeAdapter {
         if (prefix.isBlank() || label.toLowerCase().startsWith(prefix.replace("#", ""))) {
             items.add(new AutoCompleteItem(insert, label, detail, "", null,
                     AutoCompleteItem.Kind.SNIPPET, List.of()));
+        }
+    }
+
+    private static final class CodeActionLamp extends JComponent {
+        private static final Color HOVER_BACKGROUND = new Color(128, 128, 128, 60);
+        private static final Color HOVER_BORDER = new Color(128, 128, 128, 120);
+
+        private final Icon icon;
+        private boolean hovered;
+
+        CodeActionLamp(Icon icon) {
+            this.icon = icon;
+            setOpaque(false);
+            setCursor(Cursor.getPredefinedCursor(Cursor.HAND_CURSOR));
+            setToolTipText(text(
+                    "tooltip.codeActions", "Mostrar ações de código (Alt+Enter)"));
+            int width = (icon == null ? 16 : icon.getIconWidth()) + 8;
+            int height = (icon == null ? 16 : icon.getIconHeight()) + 4;
+            Dimension size = new Dimension(width, height);
+            setPreferredSize(size);
+            setSize(size);
+            addMouseListener(new MouseAdapter() {
+                @Override
+                public void mouseEntered(MouseEvent event) {
+                    hovered = true;
+                    repaint();
+                }
+
+                @Override
+                public void mouseExited(MouseEvent event) {
+                    hovered = false;
+                    repaint();
+                }
+            });
+        }
+
+        @Override
+        protected void paintComponent(Graphics graphics) {
+            Graphics2D copy = (Graphics2D) graphics.create();
+            try {
+                copy.setRenderingHint(
+                        RenderingHints.KEY_ANTIALIASING,
+                        RenderingHints.VALUE_ANTIALIAS_ON);
+                if (hovered) {
+                    copy.setColor(HOVER_BACKGROUND);
+                    copy.fillRoundRect(
+                            0, 0, getWidth() - 1, getHeight() - 1, 6, 6);
+                    copy.setColor(HOVER_BORDER);
+                    copy.drawRoundRect(
+                            0, 0, getWidth() - 1, getHeight() - 1, 6, 6);
+                }
+                if (icon != null) {
+                    int x = (getWidth() - icon.getIconWidth()) / 2;
+                    int y = (getHeight() - icon.getIconHeight()) / 2;
+                    icon.paintIcon(this, copy, x, y);
+                }
+            } finally {
+                copy.dispose();
+            }
         }
     }
 

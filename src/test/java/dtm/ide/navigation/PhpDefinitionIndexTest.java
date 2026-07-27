@@ -123,6 +123,169 @@ class PhpDefinitionIndexTest {
     }
 
     @Test
+    void reportsAndGeneratesMissingInterfaceMethods() throws Exception {
+        Files.writeString(temp.resolve("ReportService.php"), """
+                <?php
+                namespace App\\Contracts;
+
+                interface ReportService {
+                    public function generate(int $id, ?string $format = null): string;
+                    public static function supports(string $format): bool;
+                }
+                """);
+        PhpDefinitionIndex index = new PhpDefinitionIndex();
+        index.rebuild(temp).join();
+        Path implementation = temp.resolve("PdfReportService.php");
+        String source = """
+                <?php
+                namespace App\\Services;
+
+                use App\\Contracts\\ReportService;
+
+                final class PdfReportService implements ReportService
+                {
+                }
+                """;
+
+        List<PhpDefinitionIndex.MissingInterfaceImplementation> missing =
+                index.missingInterfaceImplementations(source, implementation);
+
+        assertEquals(1, missing.size());
+        assertEquals("PdfReportService", missing.getFirst().className());
+        assertEquals(List.of("generate", "supports"), missing.getFirst().methodNames());
+        assertEquals(5, missing.getFirst().range().start().line());
+        assertTrue(missing.getFirst().implementation().contains(
+                "public function generate(int $id, ?string $format = null): string"),
+                missing.getFirst().implementation());
+        assertTrue(missing.getFirst().implementation().contains(
+                "public static function supports(string $format): bool"),
+                missing.getFirst().implementation());
+        assertTrue(missing.getFirst().implementation().contains(
+                "throw new \\LogicException('Not implemented');"),
+                missing.getFirst().implementation());
+    }
+
+    @Test
+    void acceptsInheritedImplementationsAndSkipsAbstractClasses() throws Exception {
+        Files.writeString(temp.resolve("BaseContract.php"), """
+                <?php
+                namespace App\\Contracts;
+                interface BaseContract {
+                    public function inherited(): void;
+                }
+                interface ChildContract extends BaseContract {
+                    public function pending(): int;
+                }
+                """);
+        Files.writeString(temp.resolve("BaseService.php"), """
+                <?php
+                namespace App\\Services;
+                class BaseService {
+                    public function inherited(): void {}
+                }
+                """);
+        PhpDefinitionIndex index = new PhpDefinitionIndex();
+        index.rebuild(temp).join();
+
+        String concrete = """
+                <?php
+                namespace App\\Services;
+                use App\\Contracts\\ChildContract;
+                class Service extends BaseService implements ChildContract {
+                }
+                """;
+        List<PhpDefinitionIndex.MissingInterfaceImplementation> missing =
+                index.missingInterfaceImplementations(
+                        concrete, temp.resolve("Service.php"));
+        assertEquals(1, missing.size());
+        assertEquals(List.of("pending"), missing.getFirst().methodNames());
+
+        String abstractSource = concrete.replace(
+                "class Service", "abstract class Service");
+        assertTrue(index.missingInterfaceImplementations(
+                abstractSource, temp.resolve("Service.php")).isEmpty());
+    }
+
+    @Test
+    void doesNotOfferImplementationWhenClassAlreadySatisfiesContract() throws Exception {
+        Files.writeString(temp.resolve("Contract.php"), """
+                <?php
+                interface Contract {
+                    public function execute(string $value): void;
+                }
+                """);
+        PhpDefinitionIndex index = new PhpDefinitionIndex();
+        index.rebuild(temp).join();
+        String source = """
+                <?php
+                class Service implements Contract {
+                    public function execute(string $value): void {}
+                }
+                """;
+
+        assertTrue(index.missingInterfaceImplementations(
+                source, temp.resolve("Service.php")).isEmpty());
+    }
+
+    @Test
+    void qualifiesInterfaceTypesForAnImplementationInAnotherNamespace() throws Exception {
+        Files.writeString(temp.resolve("Contract.php"), """
+                <?php
+                namespace App\\Contracts;
+                use App\\Domain\\Job as Work;
+                interface Contract {
+                    public function execute(Work|self $job): Result;
+                }
+                """);
+        PhpDefinitionIndex index = new PhpDefinitionIndex();
+        index.rebuild(temp).join();
+        String source = """
+                <?php
+                namespace App\\Services;
+                use App\\Contracts\\Contract;
+                class Service implements Contract {
+                }
+                """;
+
+        String implementation = index.missingInterfaceImplementations(
+                source, temp.resolve("Service.php")).getFirst().implementation();
+
+        assertTrue(implementation.contains(
+                "execute(\\App\\Domain\\Job|\\App\\Contracts\\Contract $job): \\App\\Contracts\\Result"),
+                implementation);
+    }
+
+    @Test
+    void acceptsAnInterfaceMethodProvidedByATrait() throws Exception {
+        Files.writeString(temp.resolve("Contract.php"), """
+                <?php
+                namespace App;
+                interface Contract {
+                    public function execute(): void;
+                }
+                """);
+        Files.writeString(temp.resolve("Executes.php"), """
+                <?php
+                namespace App;
+                trait Executes {
+                    public function execute(): void {}
+                }
+                """);
+        PhpDefinitionIndex index = new PhpDefinitionIndex();
+        index.rebuild(temp).join();
+        String source = """
+                <?php
+                namespace App;
+                class Service implements Contract {
+                    use Executes;
+                }
+                """;
+
+        assertTrue(index.missingInterfaceImplementations(
+                source, temp.resolve("Service.php")).isEmpty());
+    }
+
+    @Test
     void resolvesARealHtdocsServiceWhenAvailable() throws Exception {
         Path root = Path.of("C:\\xampp\\htdocs");
         Path service = root.resolve(
