@@ -39,6 +39,7 @@ import dtm.ide.debug.PhpDebugService;
 import dtm.ide.debug.XdebugInstallerService;
 import dtm.ide.debug.XdebugStatus;
 import dtm.ide.diagnostics.PhpStrictDiagnostics;
+import dtm.ide.diagnostics.PhpSyntaxDiagnostics;
 import dtm.ide.editor.PhpEditorTheme;
 import dtm.ide.editor.HtmlCompletionProvider;
 import dtm.ide.editor.PhpConfigTokenizerProvider;
@@ -135,6 +136,7 @@ public class PhpIdeAdapter extends IdeAdapter {
     private final PhpPluginSettings settings = new PhpPluginSettings();
     private final PhpSettingsPage settingsPage = new PhpSettingsPage(settings);
     private final PhpStrictDiagnostics strictDiagnostics = new PhpStrictDiagnostics();
+    private final PhpSyntaxDiagnostics syntaxDiagnostics = new PhpSyntaxDiagnostics();
     private final AtomicLong lifecycle = new AtomicLong();
     private final AtomicBoolean lspStarting = new AtomicBoolean();
     private final Set<Path> openPhpFiles = ConcurrentHashMap.newKeySet();
@@ -432,6 +434,7 @@ public class PhpIdeAdapter extends IdeAdapter {
             return lsp.diagnostics(context.getFilePath());
         }).orElse(List.of()));
         appendStrictDiagnostics(diagnostics, context.getText());
+        appendSyntaxDiagnostics(diagnostics, context.getText());
         if (definitionIndex == null) return diagnostics;
 
         for (PhpDefinitionIndex.MissingInterfaceImplementation missing
@@ -476,6 +479,40 @@ public class PhpIdeAdapter extends IdeAdapter {
                     DiagnosticSeverity.ERROR,
                     message));
         }
+    }
+
+    private void appendSyntaxDiagnostics(List<Diagnostic> diagnostics, String source) {
+        Path php = phpForDiagnostics();
+        if (php == null) return;
+        for (PhpSyntaxDiagnostics.Issue issue : syntaxDiagnostics.analyze(php, source)) {
+            if (hasErrorDiagnosticOnLine(diagnostics, issue.line())) continue;
+            String message = text("diagnostic.phpSyntaxError", "PHP syntax error: {0}")
+                    .replace("{0}", issue.message());
+            diagnostics.add(new Diagnostic(
+                    issue.line(), issue.startCol(),
+                    issue.line(), issue.endCol(),
+                    DiagnosticSeverity.ERROR,
+                    message));
+        }
+    }
+
+    private Path phpForDiagnostics() {
+        PhpToolchainService currentToolchain = toolchain;
+        Path root = projectRoot;
+        if (currentToolchain == null) return null;
+        try {
+            return currentToolchain.findPhp(root);
+        } catch (RuntimeException e) {
+            return null;
+        }
+    }
+
+    private static boolean hasErrorDiagnosticOnLine(List<Diagnostic> diagnostics, int line) {
+        for (Diagnostic diagnostic : diagnostics) {
+            if (diagnostic == null || diagnostic.severity() != DiagnosticSeverity.ERROR) continue;
+            if (diagnostic.startLine() == line) return true;
+        }
+        return false;
     }
 
     @Override
