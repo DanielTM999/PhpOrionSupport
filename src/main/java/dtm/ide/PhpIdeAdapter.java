@@ -210,7 +210,11 @@ public class PhpIdeAdapter extends IdeAdapter {
         if (toolchain == null) toolchain = newInstance(PhpToolchainService.class);
         if (originsIndexer == null) originsIndexer = newInstance(OriginsIndexer.class);
         if (composerService == null) composerService = newInstance(ComposerService.class);
-        if (runSupport == null) runSupport = newInstance(PhpRunSupport.class);
+        if (runSupport == null) {
+            runSupport = newInstance(PhpRunSupport.class);
+            runSupport.configureXampp(settings::xamppRoot, this::persistXamppRoot,
+                    this::createModernComponentDialogBuilder);
+        }
         if (xdebugInstaller == null) xdebugInstaller = newInstance(XdebugInstallerService.class);
         if (debugAdapterInstaller == null) {
             debugAdapterInstaller = newInstance(PhpDebugAdapterInstallerService.class);
@@ -1057,9 +1061,42 @@ public class PhpIdeAdapter extends IdeAdapter {
     }
 
     @Override
+    public void onRunConfigurationChanged(RunConfigurationData data) {
+        if (data == null || !isPhpRunConfiguration(data)) return;
+        boolean debuggable = isPhpDebugConfiguration(data);
+        // Se o XAMPP já estiver rodando (iniciado por nós), ao selecionar a config o botão deve
+        // aparecer no estado "executando" para permitir parar.
+        boolean xamppRunning = PhpRunSupport.TYPE_XAMPP.equals(data.getType())
+                && runSupport != null && runSupport.isXamppServerRunning();
+        SwingUtilities.invokeLater(() -> {
+            requestSetRunButtonEnabled(true);
+            requestSetDebugButtonEnabled(debuggable);
+            requestSetRunButtonRunning(xamppRunning);
+        });
+    }
+
+    private static boolean isPhpRunConfiguration(RunConfigurationData data) {
+        String type = data.getType();
+        return PhpRunSupport.TYPE_XAMPP.equals(type)
+                || PhpRunSupport.TYPE_BUILTIN.equals(type)
+                || PhpRunSupport.TYPE_CLI.equals(type)
+                || PhpRunSupport.TYPE_XDEBUG_LISTEN.equals(type)
+                || PhpRunSupport.TYPE_XDEBUG_CLI.equals(type)
+                || PhpRunSupport.TYPE_XDEBUG_BUILTIN.equals(type);
+    }
+
+    private static boolean isPhpDebugConfiguration(RunConfigurationData data) {
+        // O XAMPP inicia um servidor externo: a depuração via Xdebug não se aplica a esse modo.
+        return isPhpRunConfiguration(data) && !PhpRunSupport.TYPE_XAMPP.equals(data.getType());
+    }
+
+    @Override
     public RunProcessHandle launch(RunConfigurationData data, RunExecutionContext context) throws Exception {
         RunProcessHandle handle = runSupport.launch(data, projectRoot, toolchain, false);
         openBrowserFor(data);
+        if (data != null && PhpRunSupport.TYPE_XAMPP.equals(data.getType())) {
+            SwingUtilities.invokeLater(() -> requestSetRunButtonRunning(true));
+        }
         return handle;
     }
 
@@ -1100,7 +1137,14 @@ public class PhpIdeAdapter extends IdeAdapter {
     public void stop(RunConfigurationData data) {
         if (debugService != null) debugService.stop();
         clearDebugLine();
-        runSupport.stop(data);
+        try {
+            runSupport.stop(data);
+        } catch (Exception e) {
+            log.warn("Falha ao parar configuração PHP", e);
+        }
+        if (data != null && PhpRunSupport.TYPE_XAMPP.equals(data.getType())) {
+            SwingUtilities.invokeLater(() -> requestSetRunButtonRunning(false));
+        }
     }
 
     @Override
@@ -1270,6 +1314,11 @@ public class PhpIdeAdapter extends IdeAdapter {
         } catch (NumberFormatException ignored) {
             return settings.xdebugPort();
         }
+    }
+
+    private void persistXamppRoot(String root) {
+        settings.xamppRoot(root);
+        setProperty("orion.xampp.root", root);
     }
 
     private void applySettings() {
