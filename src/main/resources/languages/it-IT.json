@@ -15,6 +15,8 @@
   "PhpIdeAdapter.status.definitionFileNotFound": "PHP: file della definizione non trovato",
   "PhpIdeAdapter.status.usagesNotFound": "PHP: nessun utilizzo trovato",
   "PhpIdeAdapter.diagnostic.missingInterfaceMethods": "La classe {0} deve implementare i metodi dell’interfaccia: {1}.",
+  "PhpIdeAdapter.diagnostic.duplicateConstantName": "La costante {0} è già dichiarata in questo tipo.",
+  "PhpIdeAdapter.diagnostic.duplicateConstantValue": "La costante {0} ripete il valore dichiarato da {1}.",
   "PhpIdeAdapter.action.implementInterface": "Implementa interfaccia",
   "PhpIdeAdapter.tooltip.codeActions": "Mostra azioni codice (Alt+Invio)"
 }

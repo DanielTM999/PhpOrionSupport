@@ -15,6 +15,8 @@
   "PhpIdeAdapter.status.definitionFileNotFound": "PHP: Definitionsdatei nicht gefunden",
   "PhpIdeAdapter.status.usagesNotFound": "PHP: Keine Verwendungen gefunden",
   "PhpIdeAdapter.diagnostic.missingInterfaceMethods": "Die Klasse {0} muss die Schnittstellenmethoden implementieren: {1}.",
+  "PhpIdeAdapter.diagnostic.duplicateConstantName": "Die Konstante {0} ist in diesem Typ bereits deklariert.",
+  "PhpIdeAdapter.diagnostic.duplicateConstantValue": "Die Konstante {0} wiederholt den von {1} deklarierten Wert.",
   "PhpIdeAdapter.action.implementInterface": "Schnittstelle implementieren",
   "PhpIdeAdapter.tooltip.codeActions": "Codeaktionen anzeigen (Alt+Eingabe)"
 }

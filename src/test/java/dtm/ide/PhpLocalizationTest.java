@@ -23,6 +23,8 @@ class PhpLocalizationTest {
                 assertTrue(json.contains("PhpIdeAdapter.editor.goToDefinition"), resource);
                 assertTrue(json.contains("PhpIdeAdapter.editor.goToImplementation"), resource);
                 assertTrue(json.contains("PhpIdeAdapter.editor.findUsages"), resource);
+                assertTrue(json.contains("PhpIdeAdapter.diagnostic.duplicateConstantName"), resource);
+                assertTrue(json.contains("PhpIdeAdapter.diagnostic.duplicateConstantValue"), resource);
             }
         }
     }

@@ -38,6 +38,7 @@ import dtm.ide.debug.PhpDebugAdapterInstallerService;
 import dtm.ide.debug.PhpDebugService;
 import dtm.ide.debug.XdebugInstallerService;
 import dtm.ide.debug.XdebugStatus;
+import dtm.ide.diagnostics.PhpStrictDiagnostics;
 import dtm.ide.editor.PhpEditorTheme;
 import dtm.ide.editor.HtmlCompletionProvider;
 import dtm.ide.editor.PhpConfigTokenizerProvider;
@@ -133,9 +134,11 @@ public class PhpIdeAdapter extends IdeAdapter {
     private final OriginsExplorerPanel originsPanel = new OriginsExplorerPanel();
     private final PhpPluginSettings settings = new PhpPluginSettings();
     private final PhpSettingsPage settingsPage = new PhpSettingsPage(settings);
+    private final PhpStrictDiagnostics strictDiagnostics = new PhpStrictDiagnostics();
     private final AtomicLong lifecycle = new AtomicLong();
     private final AtomicBoolean lspStarting = new AtomicBoolean();
     private final Set<Path> openPhpFiles = ConcurrentHashMap.newKeySet();
+    private final Map<Path, String> openPhpTexts = new ConcurrentHashMap<>();
     private final AtomicLong wordCaretTicket = new AtomicLong();
     private final ScheduledExecutorService codeActionDelayExecutor =
             Executors.newSingleThreadScheduledExecutor(r -> {
@@ -240,6 +243,7 @@ public class PhpIdeAdapter extends IdeAdapter {
                         log.warn("Intelephense indisponível", error);
                         setStatusBarText("PHP: Intelephense indisponível — " + rootMessage(error));
                     } else if (current(ticket, root)) {
+                        refreshOpenPhpFiles();
                         setStatusBarText("PHP: Intelephense pronto");
                     }
                 });
@@ -306,6 +310,8 @@ public class PhpIdeAdapter extends IdeAdapter {
         projectRoot = null;
         projectContext = null;
         originsPanelId = null;
+        openPhpFiles.clear();
+        openPhpTexts.clear();
     }
 
     @Override
@@ -369,9 +375,12 @@ public class PhpIdeAdapter extends IdeAdapter {
     @Override
     public void onEditorOpen(IdeEditorContext context) {
         if (context == null || !PhpProjectConventions.isPhp(context.filePath())) return;
-        openPhpFiles.add(context.filePath().toAbsolutePath().normalize());
+        Path file = context.filePath().toAbsolutePath().normalize();
+        openPhpFiles.add(file);
+        openPhpTexts.put(file, context.getText());
         runSupport.setActiveFile(context.filePath());
-        process().ifPresent(lsp -> lsp.sync(context.filePath(), context.getText()));
+        process().ifPresent(lsp -> lsp.sync(file, context.getText()));
+        requestInitialEditorFeatures(file);
     }
 
     @Override
@@ -386,7 +395,9 @@ public class PhpIdeAdapter extends IdeAdapter {
         wordCaretTicket.incrementAndGet();
         SwingUtilities.invokeLater(this::hideCodeActionLamp);
         if (context != null && PhpProjectConventions.isPhp(context.filePath())) {
-            process().ifPresent(lsp -> lsp.sync(context.filePath(), context.getText()));
+            Path file = context.filePath().toAbsolutePath().normalize();
+            openPhpTexts.put(file, context.getText());
+            process().ifPresent(lsp -> lsp.sync(file, context.getText()));
         }
     }
 
@@ -394,7 +405,11 @@ public class PhpIdeAdapter extends IdeAdapter {
     public void onEditorClose(Path filePath) {
         wordCaretTicket.incrementAndGet();
         SwingUtilities.invokeLater(this::hideCodeActionLamp);
-        if (filePath != null) openPhpFiles.remove(filePath.toAbsolutePath().normalize());
+        if (filePath != null) {
+            Path file = filePath.toAbsolutePath().normalize();
+            openPhpFiles.remove(file);
+            openPhpTexts.remove(file);
+        }
         process().ifPresent(lsp -> lsp.close(filePath));
     }
 
@@ -412,6 +427,7 @@ public class PhpIdeAdapter extends IdeAdapter {
             lsp.sync(context.getFilePath(), context.getText());
             return lsp.diagnostics(context.getFilePath());
         }).orElse(List.of()));
+        appendStrictDiagnostics(diagnostics, context.getText());
         if (definitionIndex == null) return diagnostics;
 
         for (PhpDefinitionIndex.MissingInterfaceImplementation missing
@@ -434,6 +450,28 @@ public class PhpIdeAdapter extends IdeAdapter {
                     message));
         }
         return List.copyOf(diagnostics);
+    }
+
+    private void appendStrictDiagnostics(List<Diagnostic> diagnostics, String source) {
+        for (PhpStrictDiagnostics.Issue issue : strictDiagnostics.analyze(source)) {
+            if (hasDuplicateConstantDiagnostic(diagnostics, issue.range())) continue;
+            String message = switch (issue.kind()) {
+                case DUPLICATE_NAME -> text("diagnostic.duplicateConstantName",
+                        "Constant {0} is already declared in this type.")
+                        .replace("{0}", issue.constantName());
+                case DUPLICATE_VALUE -> text("diagnostic.duplicateConstantValue",
+                        "Constant {0} repeats the value declared by {1}.")
+                        .replace("{0}", issue.constantName())
+                        .replace("{1}", issue.previousName());
+            };
+            diagnostics.add(new Diagnostic(
+                    issue.range().start().line(),
+                    issue.range().start().col(),
+                    issue.range().end().line(),
+                    issue.range().end().col(),
+                    DiagnosticSeverity.ERROR,
+                    message));
+        }
     }
 
     @Override
@@ -1296,6 +1334,18 @@ public class PhpIdeAdapter extends IdeAdapter {
         if (file != null) requestRefreshDiagnostics(file);
     }
 
+    private void refreshOpenPhpFiles() {
+        process().ifPresent(lsp -> openPhpTexts.forEach((file, source) -> {
+            lsp.sync(file, source);
+            requestInitialEditorFeatures(file);
+        }));
+    }
+
+    private void requestInitialEditorFeatures(Path file) {
+        requestRefreshDiagnostics(file);
+        requestRefreshCodeLenses(file);
+    }
+
     private static boolean hasMissingInterfaceDiagnostic(
             List<Diagnostic> diagnostics, Range classRange) {
         if (classRange == null) return false;
@@ -1309,6 +1359,24 @@ public class PhpIdeAdapter extends IdeAdapter {
                     : diagnostic.message().toLowerCase(java.util.Locale.ROOT);
             if (message.contains("abstract method")
                     || (message.contains("implement") && message.contains("method"))) {
+                return true;
+            }
+        }
+        return false;
+    }
+
+    private static boolean hasDuplicateConstantDiagnostic(
+            List<Diagnostic> diagnostics, Range constantRange) {
+        for (Diagnostic diagnostic : diagnostics) {
+            if (diagnostic == null || !rangesIntersect(constantRange, Range.of(
+                    diagnostic.startLine(), diagnostic.startCol(),
+                    diagnostic.endLine(), diagnostic.endCol()))) {
+                continue;
+            }
+            String message = diagnostic.message() == null ? ""
+                    : diagnostic.message().toLowerCase(java.util.Locale.ROOT);
+            if (message.contains("duplicate") || message.contains("redeclare")
+                    || message.contains("already declared") || message.contains("redefin")) {
                 return true;
             }
         }

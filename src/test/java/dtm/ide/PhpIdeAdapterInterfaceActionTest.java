@@ -68,6 +68,28 @@ class PhpIdeAdapterInterfaceActionTest {
         assertTrue(updated.contains("throw new \\LogicException('Not implemented');"));
     }
 
+    @Test
+    void exposesStrictDuplicateConstantValueAsErrorWithoutLanguageServer() {
+        Path file = temp.resolve("RouterAssembler.php");
+        String source = """
+                <?php
+                class RouterAssembler {
+                    const LISTAR_LOJISTA = "SystemRegistroListarLojista";
+                    const LISTAR_LOGISTA = "SystemRegistroListarLojista";
+                }
+                """;
+        PhpIdeAdapter adapter = new PhpIdeAdapter();
+
+        Collection<Diagnostic> diagnostics = adapter.getDiagnostics(
+                new IdeDiagnosticsContext(source, file), false, List.of());
+
+        assertEquals(1, diagnostics.size());
+        Diagnostic diagnostic = diagnostics.iterator().next();
+        assertEquals(DiagnosticSeverity.ERROR, diagnostic.severity());
+        assertTrue(diagnostic.message().contains("LISTAR_LOGISTA"));
+        assertEquals(3, diagnostic.startLine());
+    }
+
     private static void setField(Object target, String name, Object value) throws Exception {
         Field field = target.getClass().getDeclaredField(name);
         field.setAccessible(true);
