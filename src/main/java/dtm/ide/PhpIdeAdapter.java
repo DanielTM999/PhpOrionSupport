@@ -232,14 +232,14 @@ public class PhpIdeAdapter extends IdeAdapter {
         Path root = projectRoot;
         if (root == null) return;
         if (process().isPresent() || !lspStarting.compareAndSet(false, true)) return;
-        Path resources = getApplicationContext().getResourcesPath();
+        Path resources = getResource().getResourcePath();
         log.info("Inicializando Intelephense para {} em {}", root, resources);
         showProgress("phpLsp", "Preparando Intelephense");
         toolchain.ensureIntelephense(resources)
                 .thenCompose(command -> {
                     if (!current(ticket, root)) return CompletableFuture.completedFuture(null);
-                    Path storage = resources.resolve("php").resolve("workspaces")
-                            .resolve(Integer.toHexString(root.toString().toLowerCase().hashCode()));
+                    Path storage = getResource().getResourcePath(
+                            "workspaces/" + Integer.toHexString(root.toString().toLowerCase().hashCode()));
                     return languageService.start(command, root, storage);
                 })
                 .whenComplete((unused, error) -> {
@@ -1146,7 +1146,7 @@ public class PhpIdeAdapter extends IdeAdapter {
                     + " Use PHP > Diagnosticar/instalar Xdebug antes de depurar.");
         }
         List<String> adapter = debugAdapterInstaller
-                .ensure(getApplicationContext().getResourcesPath(), toolchain)
+                .ensure(getResource().getResourcePath(), toolchain)
                 .get(2, java.util.concurrent.TimeUnit.MINUTES);
         int port = debugPort(data);
         RunProcessHandle handle = debugService.launch(adapter, data, context, projectRoot,
@@ -1288,7 +1288,7 @@ public class PhpIdeAdapter extends IdeAdapter {
 
     private void installXdebug(Path php) {
         showProgress("phpXdebug", "Instalando Xdebug");
-        xdebugInstaller.install(php, getApplicationContext().getResourcesPath(), settings.xdebugPort())
+        xdebugInstaller.install(php, getResource().getResourcePath(), settings.xdebugPort())
                 .whenComplete((result, error) -> SwingUtilities.invokeLater(() -> {
                     hideProgress("phpXdebug");
                     if (error != null) {
