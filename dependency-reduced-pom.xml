@@ -171,7 +171,7 @@
     <maven.compiler.source>25</maven.compiler.source>
     <orion.api.version>1.0.0</orion.api.version>
     <project.build.sourceEncoding>UTF-8</project.build.sourceEncoding>
-    <object.mapper.version>3.2.0</object.mapper.version>
+    <object.mapper.version>3.2.2</object.mapper.version>
     <junit.version>5.11.4</junit.version>
     <request.action.version>1.0.7</request.action.version>
   </properties>

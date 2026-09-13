@@ -11,7 +11,7 @@
     <properties>
         <orion.api.version>1.0.0</orion.api.version>
         <request.action.version>1.0.7</request.action.version>
-        <object.mapper.version>3.2.0</object.mapper.version>
+        <object.mapper.version>3.2.2</object.mapper.version>
         <apache.compress.version>1.26.2</apache.compress.version>
         <junit.version>5.11.4</junit.version>
 

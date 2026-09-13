@@ -42,6 +42,7 @@ import dtm.ide.diagnostics.PhpStrictDiagnostics;
 import dtm.ide.diagnostics.PhpSyntaxDiagnostics;
 import dtm.ide.editor.PhpEditorTheme;
 import dtm.ide.editor.HtmlCompletionProvider;
+import dtm.ide.editor.PhpCaretContext;
 import dtm.ide.editor.PhpConfigTokenizerProvider;
 import dtm.ide.editor.PhpTokenizerProvider;
 import dtm.ide.lsp.PhpLanguageServerProcess;
@@ -552,7 +553,29 @@ public class PhpIdeAdapter extends IdeAdapter {
 
     @Override
     public boolean shouldAutoTriggerCompletion(IdeCompletionContext context) {
-        return context != null && PhpProjectConventions.isPhp(context.filePath());
+        if (context == null || !PhpProjectConventions.isPhp(context.filePath())) return false;
+        String line = context.currentLine();
+        int col = context.caretCol();
+        if (line == null || col <= 0 || col > line.length()) return false;
+        char typed = line.charAt(col - 1);
+        String text = context.text();
+        int caret = context.caretOffset();
+        if (!HtmlCompletionProvider.isPhpAt(text, caret)) {
+            return (typed == '<' || typed == '/')
+                    && !PhpCaretContext.insideHtmlAttributeValue(text, caret);
+        }
+        if (PhpCaretContext.inStringOrComment(text, caret - 1)) return false;
+        return switch (typed) {
+            case '$', '\\', '#' -> true;
+            case '>' -> precededBy(text, caret, '-');
+            case ':' -> precededBy(text, caret, ':');
+            default -> false;
+        };
+    }
+
+    private static boolean precededBy(String text, int caret, char expected) {
+        return text != null && caret >= 2 && caret <= text.length()
+                && text.charAt(caret - 2) == expected;
     }
 
     @Override
@@ -562,9 +585,10 @@ public class PhpIdeAdapter extends IdeAdapter {
 
     @Override
     public Set<Character> getCompletionTriggerCharacters() {
-        Set<Character> triggers = new java.util.HashSet<>(
-                Set.of('$', '>', ':', '\\', '#', '<', '/', '"', '\'', '-', '@'));
-        process().ifPresent(lsp -> triggers.addAll(lsp.completionTriggers()));
+        Set<Character> allowed = Set.of('$', '>', ':', '\\', '#', '<', '/');
+        Set<Character> triggers = new java.util.HashSet<>(allowed);
+        process().ifPresent(lsp -> lsp.completionTriggers().stream()
+                .filter(allowed::contains).forEach(triggers::add));
         return Set.copyOf(triggers);
     }
 

@@ -18,6 +18,13 @@
       "description": "Adapter independente para PHP e o framework Origins.",
       "version": "1.0.0",
       "website": "https://github.com/DanielTM999/PhpOrionSupport"
+    },
+    {
+      "id": "php-project-wizard",
+      "name": "PHP Project Wizard",
+      "description": "Wizard para criacao de projetos PHP, Composer, Origins, Laravel, Symfony e Slim.",
+      "version": "1.0.0",
+      "website": "https://github.com/DanielTM999/PhpOrionSupport"
     }
   ]
 }
