@@ -13,7 +13,7 @@ import dtm.ide.api.extension.runconfig.RunExecutionContext;
 import dtm.ide.api.extension.runconfig.RunProcessHandle;
 import dtm.ide.api.extension.screen.ToolIconType;
 import dtm.ide.api.extension.settings.PluginSettingsPage;
-import dtm.ide.api.project.editor.DocumentHighlight;
+import dtm.stools.component.panels.editor.code.documenthighlight.DocumentHighlight;
 import dtm.ide.api.project.editor.FileAssociated;
 import dtm.ide.api.project.editor.FormatCodeContext;
 import dtm.ide.api.project.editor.IdeCompletionContext;

@@ -249,15 +249,15 @@ public final class PhpLanguageServerProcess {
         return locations;
     }
 
-    public List<dtm.ide.api.project.editor.DocumentHighlight> highlights(
+    public List<dtm.stools.component.panels.editor.code.documenthighlight.DocumentHighlight> highlights(
             Path file, String text, int line, int character) {
         JsonNode result = positionalRequest("textDocument/documentHighlight", file, text, line, character, Map.of());
         if (result == null || !result.isArray()) return List.of();
-        List<dtm.ide.api.project.editor.DocumentHighlight> output = new ArrayList<>();
+        List<dtm.stools.component.panels.editor.code.documenthighlight.DocumentHighlight> output = new ArrayList<>();
         for (JsonNode node : result) {
             Range range = parseRange(node.get("range"));
-            if (range != null) output.add(new dtm.ide.api.project.editor.DocumentHighlight(
-                    range, dtm.ide.api.project.editor.DocumentHighlight.Kind.TEXT));
+            if (range != null) output.add(new dtm.stools.component.panels.editor.code.documenthighlight.DocumentHighlight(
+                    range, dtm.stools.component.panels.editor.code.documenthighlight.DocumentHighlight.Kind.TEXT));
         }
         return output;
     }
