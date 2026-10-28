@@ -42,6 +42,7 @@ import dtm.ide.diagnostics.PhpStrictDiagnostics;
 import dtm.ide.diagnostics.PhpSyntaxDiagnostics;
 import dtm.ide.editor.PhpEditorTheme;
 import dtm.ide.editor.HtmlCompletionProvider;
+import dtm.ide.editor.HtmlPathCompletionProvider;
 import dtm.ide.editor.PhpCaretContext;
 import dtm.ide.editor.PhpConfigTokenizerProvider;
 import dtm.ide.editor.PhpTokenizerProvider;
@@ -129,6 +130,7 @@ public class PhpIdeAdapter extends IdeAdapter {
 
     private final PhpTokenizerProvider tokenizer = new PhpTokenizerProvider();
     private final HtmlCompletionProvider htmlCompletion = new HtmlCompletionProvider();
+    private final HtmlPathCompletionProvider pathCompletion = new HtmlPathCompletionProvider();
     private final PhpConfigTokenizerProvider envTokenizer = new PhpConfigTokenizerProvider(PhpConfigTokenizerProvider.Mode.ENV);
     private final PhpConfigTokenizerProvider htaccessTokenizer = new PhpConfigTokenizerProvider(PhpConfigTokenizerProvider.Mode.HTACCESS);
     private final PhpConfigTokenizerProvider modulesTokenizer = new PhpConfigTokenizerProvider(PhpConfigTokenizerProvider.Mode.MODULES);
@@ -540,8 +542,13 @@ public class PhpIdeAdapter extends IdeAdapter {
     public List<AutoCompleteItem> getCompletionSuggestions(IdeCompletionContext context) {
         if (context == null || !PhpProjectConventions.isPhp(context.filePath())) return List.of();
         if (!HtmlCompletionProvider.isPhpAt(context.text(), context.caretOffset())) {
-            return htmlCompletion.suggestions(context.text(), context.caretOffset(),
-                    context.triggerKind() != IdeCompletionTriggerKind.TYPING);
+            boolean explicit = context.triggerKind() != IdeCompletionTriggerKind.TYPING;
+            if (PhpCaretContext.insideHtmlAttributeValue(context.text(), context.caretOffset())) {
+                // File paths only on explicit request (Ctrl+Space), like OrionWebkit.
+                return explicit ? pathCompletion.suggestions(context.text(), context.caretOffset(),
+                        context.filePath(), projectRoot) : List.of();
+            }
+            return htmlCompletion.suggestions(context.text(), context.caretOffset(), explicit);
         }
         List<AutoCompleteItem> result = new ArrayList<>(originsCompletions(context.prefix()));
         process().ifPresent(lsp -> result.addAll(lsp.complete(
